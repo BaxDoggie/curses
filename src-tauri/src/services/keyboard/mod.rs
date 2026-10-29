@@ -1,7 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::{
     os::raw::c_int,
-    sync::RwLock,
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Mutex, RwLock,
+    },
 };
 use tauri::{
     command,
@@ -16,7 +19,7 @@ use windows::Win32::{
         Input::KeyboardAndMouse::{GetKeyboardLayout, GetKeyboardState, MapVirtualKeyExW, ToUnicodeEx, MAPVK_VK_TO_VSC_EX, VK_LCONTROL},
         WindowsAndMessaging::{
             CallNextHookEx, GetForegroundWindow, GetWindowThreadProcessId, SetWindowsHookExA, UnhookWindowsHookEx, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT,
-            WH_KEYBOARD_LL, WM_KEYDOWN,
+            WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
         },
     },
 };
@@ -25,6 +28,14 @@ struct BgInput {
     tx: mpsc::UnboundedSender<String>,
     listen_hook_id: RwLock<Option<HHOOK>>,
 }
+
+struct PushToTalk {
+    tx: mpsc::UnboundedSender<String>,
+    listen_hook_id: Mutex<Option<HHOOK>>,
+}
+
+static PTT_KEY_CODE: AtomicU32 = AtomicU32::new(0);
+static PTT_TX: Mutex<Option<mpsc::UnboundedSender<String>>> = Mutex::new(None);
 
 #[derive(Debug)]
 enum KeyCommand {
@@ -94,6 +105,67 @@ unsafe extern "system" fn raw_callback(code: c_int, param: WPARAM, lpdata: LPARA
     CallNextHookEx(None, code, param, lpdata)
 }
 
+unsafe extern "system" fn push_to_talk_callback(code: c_int, param: WPARAM, lpdata: LPARAM) -> LRESULT {
+    if code as u32 == HC_ACTION {
+        let key_command = match param.0 as u32 {
+            WM_KEYDOWN | WM_SYSKEYDOWN => Some("ptt:down"),
+            WM_KEYUP | WM_SYSKEYUP => Some("ptt:up"),
+            _ => None,
+        };
+
+        if let Some(key_command) = key_command {
+            let KBDLLHOOKSTRUCT { vkCode, .. } = *(lpdata.0 as *const KBDLLHOOKSTRUCT);
+            if vkCode == PTT_KEY_CODE.load(Ordering::Relaxed) {
+                if let Ok(tx) = PTT_TX.lock() {
+                    if let Some(tx) = tx.as_ref() {
+                        let _ = tx.send(key_command.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    CallNextHookEx(None, code, param, lpdata)
+}
+
+#[command]
+fn start_push_to_talk(state: State<'_, PushToTalk>, key_code: u32) -> Result<(), String> {
+    if key_code == 0 {
+        return Err("A push-to-talk key must be selected".into());
+    }
+
+    let mut hook_id = state.listen_hook_id.lock().map_err(|error| error.to_string())?;
+    if hook_id.is_some() {
+        return Ok(());
+    }
+
+    PTT_KEY_CODE.store(key_code, Ordering::Relaxed);
+    *PTT_TX.lock().map_err(|error| error.to_string())? = Some(state.tx.clone());
+
+    let Ok(hook) = (unsafe { SetWindowsHookExA(WH_KEYBOARD_LL, Some(push_to_talk_callback), None, 0) }) else {
+        PTT_KEY_CODE.store(0, Ordering::Relaxed);
+        *PTT_TX.lock().map_err(|error| error.to_string())? = None;
+        return Err("Could not start push-to-talk key listener".into());
+    };
+
+    *hook_id = Some(hook);
+    Ok(())
+}
+
+#[command]
+fn stop_push_to_talk(state: State<'_, PushToTalk>) -> Result<(), String> {
+    PTT_KEY_CODE.store(0, Ordering::Relaxed);
+    *PTT_TX.lock().map_err(|error| error.to_string())? = None;
+
+    let mut hook_id = state.listen_hook_id.lock().map_err(|error| error.to_string())?;
+    if let Some(hook) = hook_id.take() {
+        unsafe {
+            UnhookWindowsHookEx(hook);
+        }
+    }
+    Ok(())
+}
+
 #[command]
 fn start_tracking(state: State<'_, BgInput>) -> Result<(), String> {
     {
@@ -143,11 +215,15 @@ struct HotkeyBinding {
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     let (pubsub_output_tx, mut pubsub_output_rx) = mpsc::unbounded_channel::<String>(); // to js
     Builder::new("keyboard")
-        .invoke_handler(tauri::generate_handler![start_tracking, stop_tracking])
+        .invoke_handler(tauri::generate_handler![start_tracking, stop_tracking, start_push_to_talk, stop_push_to_talk])
         .setup(|app| {
             app.manage(BgInput {
-                tx: pubsub_output_tx,
+                tx: pubsub_output_tx.clone(),
                 listen_hook_id: RwLock::new(None),
+            });
+            app.manage(PushToTalk {
+                tx: pubsub_output_tx,
+                listen_hook_id: Mutex::new(None),
             });
             let handle = app.app_handle();
             tauri::async_runtime::spawn(async move {
@@ -164,5 +240,23 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
 
 #[cfg(not(feature="background_input"))]
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
-    Builder::new("keyboard").build()
+    let (pubsub_output_tx, mut pubsub_output_rx) = mpsc::unbounded_channel::<String>();
+    Builder::new("keyboard")
+        .invoke_handler(tauri::generate_handler![start_push_to_talk, stop_push_to_talk])
+        .setup(|app| {
+            app.manage(PushToTalk {
+                tx: pubsub_output_tx,
+                listen_hook_id: Mutex::new(None),
+            });
+            let handle = app.app_handle();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    if let Some(output) = pubsub_output_rx.recv().await {
+                        handle.emit_all("keyboard", output).unwrap();
+                    }
+                }
+            });
+            Ok(())
+        })
+        .build()
 }

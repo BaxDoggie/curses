@@ -574,6 +574,78 @@ export const InputShortcut: FC<ShortuctProps> = ({ shortcut, label, onChange, ..
   </InputContainer>
 }
 
+interface PushToTalkKeyProps extends InputBaseProps {
+  value: number,
+  onChange: (value: number) => void
+}
+
+const pushToTalkKeyLabel = (keyCode: number) => {
+  if (keyCode >= 65 && keyCode <= 90 || keyCode >= 48 && keyCode <= 57)
+    return String.fromCharCode(keyCode);
+  if (keyCode >= 112 && keyCode <= 123)
+    return `F${keyCode - 111}`;
+
+  return ({
+    8: "Backspace",
+    9: "Tab",
+    13: "Enter",
+    27: "Escape",
+    32: "Space",
+    33: "Page Up",
+    34: "Page Down",
+    35: "End",
+    36: "Home",
+    37: "Left",
+    38: "Up",
+    39: "Right",
+    40: "Down",
+    45: "Insert",
+    46: "Delete"
+  } as Record<number, string>)[keyCode] ?? `Key ${keyCode}`;
+}
+
+export const InputPushToTalkKey: FC<PushToTalkKeyProps> = ({ label, value, onChange }) => {
+  const { t } = useTranslation();
+  const [recording, setRecording] = useState(false);
+
+  useEffect(() => {
+    if (!recording)
+      return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.repeat || ["Alt", "Control", "Shift", "Meta"].includes(event.key))
+        return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.keyCode)
+        onChange(event.keyCode);
+      setRecording(false);
+    };
+
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => document.removeEventListener("keydown", handleKeyDown, true);
+  }, [recording, onChange]);
+
+  return <InputContainer vertical label={label}>
+    <div className="input-group w-full">
+      <input
+        type="text"
+        value={recording ? t("stt.push_to_talk_listening") : value ? pushToTalkKeyLabel(value) : ""}
+        placeholder={t("stt.push_to_talk_no_key")}
+        readOnly
+        className="w-full input input-sm input-bordered"
+      />
+      <button className="btn btn-sm btn-primary btn-square" onClick={() => setRecording(true)}>
+        <RiKeyboardBoxFill />
+      </button>
+      <button className="btn btn-sm btn-neutral btn-square" onClick={() => { setRecording(false); onChange(0); }}>
+        <RiDeleteBin3Fill />
+      </button>
+    </div>
+  </InputContainer>;
+}
+
 type WindowsToken = {
   id: string;
   label: string;

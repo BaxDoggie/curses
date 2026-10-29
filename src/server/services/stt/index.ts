@@ -45,7 +45,12 @@ class Service_STT implements IServiceInterface, ISTTReceiver {
     muted: SttMuteState.unmuted
   });
 
+  #pushToTalkHeld = false;
+  #pushToTalkEpoch = 0;
+
   isMuted() {
+    if (this.data.pushToTalk)
+      return !this.#pushToTalkHeld;
     return this.serviceState.muted === SttMuteState.muted || this.serviceState.muted === SttMuteState.pendingUnmute;
   }
 
@@ -54,11 +59,36 @@ class Service_STT implements IServiceInterface, ISTTReceiver {
   }
 
   stop(): void {
+    this.#pushToTalkHeld = false;
+    this.#pushToTalkEpoch++;
+    window.ApiServer.keyboard.stopPushToTalk();
     this.#serviceInstance?.stop();
-    this.tryCancelSentence();
+    this.tryCancelSentence(this.data.pushToTalk);
+    if (this.data.pushToTalk)
+      this.serviceState.muted = SttMuteState.muted;
+  }
+
+  setPushToTalkHeld(held: boolean) {
+    if (!this.data.pushToTalk || this.#pushToTalkHeld === held)
+      return;
+
+    if (held) {
+      this.tryCancelSentence();
+      this.#pushToTalkEpoch++;
+      this.#pushToTalkHeld = true;
+      this.serviceState.muted = SttMuteState.unmuted;
+    } else {
+      this.#pushToTalkHeld = false;
+      this.#pushToTalkEpoch++;
+      this.tryCancelSentence(true);
+      this.serviceState.muted = SttMuteState.muted;
+    }
   }
 
   toggleMute() {
+    if (this.data.pushToTalk)
+      return;
+
     if (this.serviceState.muted === SttMuteState.unmuted) {
       // cancel mid sentence and notify user
       this.tryCancelSentence();
@@ -128,9 +158,9 @@ class Service_STT implements IServiceInterface, ISTTReceiver {
       this.start();
   }
 
-  tryCancelSentence() {
+  tryCancelSentence(forcePublish = false) {
     if (this.#lastMessageState.isInterim) {
-      this.#sendFinal("[...]");
+      this.#sendFinal("[...]", forcePublish);
       this.updateLastMessage("", false);
     }
   }
@@ -144,37 +174,41 @@ class Service_STT implements IServiceInterface, ISTTReceiver {
       this.#sendInterim(event.value);
   }
 
-  async #sendFinal(sentence: string) {
+  async #sendFinal(sentence: string, forcePublish = false) {
+    const pushToTalkEpoch = this.#pushToTalkEpoch;
     let value = sentence;
     if (this.data.uwu) {
       value = await invoke<string>("plugin:uwu|translate", {value: sentence});
     }
 
     value = this.runReplacements(value);
-    !this.isMuted() &&
+    const isCurrentPushToTalkCapture = forcePublish || !this.data.pushToTalk || (pushToTalkEpoch === this.#pushToTalkEpoch && this.#pushToTalkHeld);
+    isCurrentPushToTalkCapture && (forcePublish || !this.isMuted()) &&
     window.ApiShared.pubsub.publishText(TextEventSource.stt, {
       value,
       type: TextEventType.final,
     });
 
-    this.updateLastMessage(value, false);
+    isCurrentPushToTalkCapture && this.updateLastMessage(value, false);
 
     // apply unmute if pending
-    this.triggerPendingUnmute();
+    isCurrentPushToTalkCapture && this.triggerPendingUnmute();
   }
 
   async #sendInterim(sentence: string) {
+    const pushToTalkEpoch = this.#pushToTalkEpoch;
     let value = sentence;
     if (this.data.uwu) {
       value = await invoke<string>("plugin:uwu|translate", {value: sentence});
     }
     value = this.runReplacements(value);
-    !this.isMuted() &&
+    const isCurrentPushToTalkCapture = !this.data.pushToTalk || (pushToTalkEpoch === this.#pushToTalkEpoch && this.#pushToTalkHeld);
+    isCurrentPushToTalkCapture && !this.isMuted() &&
     window.ApiShared.pubsub.publishText(TextEventSource.stt, {
       value,
       type: TextEventType.interim,
     });
-    this.updateLastMessage(value, true);
+    isCurrentPushToTalkCapture && this.updateLastMessage(value, true);
   }
 
   #setStatus(value: ServiceNetworkState) {
@@ -185,6 +219,13 @@ class Service_STT implements IServiceInterface, ISTTReceiver {
     this.#setStatus(ServiceNetworkState.connected);
   }
   onStop(error?: string | undefined): void {
+    if (error && this.data.pushToTalk) {
+      this.#pushToTalkHeld = false;
+      this.#pushToTalkEpoch++;
+      this.serviceState.muted = SttMuteState.muted;
+      window.ApiServer.keyboard.stopPushToTalk();
+    }
+
     if (error) {
       toast(error, { type: "error", autoClose: false });
       this.serviceState.error = error;
@@ -198,13 +239,32 @@ class Service_STT implements IServiceInterface, ISTTReceiver {
     this.#sendFinal(value);
   }
 
-  start() {
+  async start() {
     this.stop();
     this.serviceState.error = "";
 
     let backend = this.data.backend;
     if (!(backend in backends) || !backends[backend]) {
       return;
+    }
+
+    if (this.data.pushToTalk) {
+      if (!this.data.pushToTalkKey) {
+        const error = "Choose a push-to-talk key before starting speech-to-text";
+        this.serviceState.error = error;
+        toast.error(error);
+        return;
+      }
+
+      this.serviceState.muted = SttMuteState.muted;
+      try {
+        await window.ApiServer.keyboard.startPushToTalk(this.data.pushToTalkKey);
+      } catch (error) {
+        this.serviceState.error = String(error);
+        toast.error(`Could not start push-to-talk: ${error}`);
+        this.stop();
+        return;
+      }
     }
 
     const serviceConstructor = backends[backend];

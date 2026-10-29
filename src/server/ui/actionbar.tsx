@@ -1,7 +1,7 @@
 import { appWindow } from "@tauri-apps/api/window";
 import { exit } from '@tauri-apps/api/process';
 import classNames from "classnames";
-import { FC, HtmlHTMLAttributes, PropsWithChildren, ReactNode, useState } from "react";
+import { ButtonHTMLAttributes, FC, PropsWithChildren, ReactNode, useState } from "react";
 import { RiChatVoiceFill, RiFileListLine, RiMicFill, RiMicOffFill, RiPushpin2Fill, RiPushpinFill, RiStackFill, RiTranslate2, RiUserVoiceFill, RiVolumeMuteFill, RiVolumeUpFill } from "react-icons/ri";
 import { RxInput } from "react-icons/rx";
 import { VscChromeClose, VscChromeMaximize, VscChromeMinimize } from "react-icons/vsc";
@@ -17,7 +17,7 @@ const Divider: FC = () => {
   return <div className="flex-none h-4 w-1 bg-neutral rounded-full"></div>
 }
 
-type BtnProps<T> = FC<PropsWithChildren<HtmlHTMLAttributes<HTMLButtonElement> & T>>
+type BtnProps<T> = FC<PropsWithChildren<ButtonHTMLAttributes<HTMLButtonElement> & T>>
 
 const Button: BtnProps<{ tooltip: string, body?: ReactNode }> = ({ tooltip, body, children, className = "btn-ghost", ...rest }) => {
   return <Tooltip content={tooltip} body={body}>
@@ -90,7 +90,7 @@ const AppActions: FC = () => {
   const { status: ttsStatus } = useSnapshot(window.ApiServer.tts.serviceState);
   const { status: translationStatus } = useSnapshot(window.ApiServer.translation.serviceState);
 
-  const { showActionButton: sttButton } = useSnapshot(window.ApiServer.state.services.stt);
+  const { showActionButton: sttButton, data: sttData } = useSnapshot(window.ApiServer.state.services.stt);
   const { showActionButton: ttsButton } = useSnapshot(window.ApiServer.state.services.tts);
   const { showActionButton: translationButton } = useSnapshot(window.ApiServer.state.services.translation);
 
@@ -104,7 +104,13 @@ const AppActions: FC = () => {
     <Button className={vfxMute ? "btn-error" : "btn-ghost"} tooltip={t('main.btn_mute_effects')} body={t('main.btn_mute_effects_desc')} onClick={handleSwitchSoundEffects}>{vfxMute ? <RiVolumeMuteFill /> : <RiVolumeUpFill />}</Button>
 
     {window.ApiServer.stt.serviceState.muted === SttMuteState.muted && (
-      <Button className="btn-error" tooltip={t('main.btn_unmute_stt')} onClick={handleSwitchMuteSTT}>
+      <Button
+        className="btn-error"
+        tooltip={sttData.pushToTalk ? t('stt.field_push_to_talk') : t('main.btn_unmute_stt')}
+        body={sttData.pushToTalk ? t('stt.field_push_to_talk_desc') : undefined}
+        disabled={sttData.pushToTalk}
+        onClick={handleSwitchMuteSTT}
+      >
         <RiMicOffFill />
       </Button>  
     )}
@@ -116,7 +122,13 @@ const AppActions: FC = () => {
     )}
 
     {window.ApiServer.stt.serviceState.muted === SttMuteState.unmuted && (
-      <Button className="btn-ghost" tooltip={t('main.btn_mute_stt')} onClick={handleSwitchMuteSTT}>
+      <Button
+        className="btn-ghost"
+        tooltip={sttData.pushToTalk ? t('stt.field_push_to_talk') : t('main.btn_mute_stt')}
+        body={sttData.pushToTalk ? t('stt.field_push_to_talk_desc') : undefined}
+        disabled={sttData.pushToTalk}
+        onClick={handleSwitchMuteSTT}
+      >
         <RiMicFill />
       </Button>  
     )}

@@ -17,6 +17,8 @@ type InputCommands = "submit" | "delete" | "cancel";
  * keyboard.cmd left | right | submit | delete
  */
 class Service_Keyboard implements IServiceInterface {
+  #pushToTalkStop: Promise<void> = Promise.resolve();
+
   ui = proxy<{
     currentTarget: ShortcutKeys | "",
     showRecorder: boolean,
@@ -34,17 +36,28 @@ class Service_Keyboard implements IServiceInterface {
   });
 
   async init() {
-    if (!window.Config.features.background_input)
-      return;
-      
-    this.rebindShortcuts();
-
-    // send hotkeys
     listen<string>('keyboard', e => {
       const str = e.payload;
       str.startsWith("shortcut:") && this.processShortcut(str.slice(9) as ShortcutKeys)
       str.startsWith("key:") && this.processKey(str.slice(4));
       str.startsWith("cmd:") && this.processCommand(str.slice(4) as InputCommands);
+      str === "ptt:down" && window.ApiServer.stt.setPushToTalkHeld(true);
+      str === "ptt:up" && window.ApiServer.stt.setPushToTalkHeld(false);
+    });
+
+    if (!window.Config.features.background_input)
+      return;
+
+    this.rebindShortcuts();
+  }
+
+  startPushToTalk(keyCode: number) {
+    return this.#pushToTalkStop.then(() => invoke<void>("plugin:keyboard|start_push_to_talk", { keyCode }));
+  }
+
+  stopPushToTalk() {
+    this.#pushToTalkStop = invoke<void>("plugin:keyboard|stop_push_to_talk").catch(error => {
+      toast.error(`Could not stop push-to-talk: ${error}`);
     });
   }
 

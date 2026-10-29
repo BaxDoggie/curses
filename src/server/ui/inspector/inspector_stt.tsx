@@ -8,7 +8,7 @@ import { useSnapshot } from "valtio";
 import { azureLanguages, deepGramLangs, nativeLangs } from "../../services/stt/stt_data";
 import ServiceButton from "../service-button";
 import Inspector from "./components";
-import { InputCheckbox, InputMapObject, InputMappedGroupSelect, InputSelect, InputText, InputWebAudioInput } from "./components/input";
+import { InputCheckbox, InputMapObject, InputMappedGroupSelect, InputPushToTalkKey, InputSelect, InputText, InputWebAudioInput } from "./components/input";
 import NiceModal from "@ebay/nice-modal-react";
 import Modal from "../Modal";
 import { useTranslation } from 'react-i18next';
@@ -214,6 +214,11 @@ const Inspector_STT: FC = () => {
       <InputCheckbox label="stt.field_stop_with_stream" value={data.data.stopWithStream} onChange={e => up("stopWithStream", e)} />
       <span className="link link-accent link-hover font-semibold flex items-center gap-2 text-sm" onClick={handleShowReplacements}><RiCharacterRecognitionFill/>{t('common.btn_edit_replacements')}</span>
       <Inspector.Deactivatable active={state.status === ServiceNetworkState.disconnected}>
+        <InputCheckbox label="stt.field_push_to_talk" value={data.data.pushToTalk} onChange={e => up("pushToTalk", e)} />
+        {data.data.pushToTalk && <>
+          <InputPushToTalkKey label="stt.field_push_to_talk_key" value={data.data.pushToTalkKey} onChange={e => up("pushToTalkKey", e)} />
+          <Inspector.Description>{t('stt.field_push_to_talk_desc')}</Inspector.Description>
+        </>}
         <InputSelect options={[
           { label: "Native", value: STT_Backends.native },
           { label: "Browser", value: STT_Backends.browser },

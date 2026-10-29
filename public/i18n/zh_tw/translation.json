@@ -62,6 +62,11 @@
   "stt": {
     "title": "語音轉文本",
     "field_enable_interim_results": "啟用臨時結果",
+    "field_push_to_talk": "按鍵通話",
+    "field_push_to_talk_key": "按鍵通話快捷鍵",
+    "field_push_to_talk_desc": "按住此鍵傳送語音轉文字。放開後會靜音並捨棄未完成的句子。",
+    "push_to_talk_listening": "請按任意鍵...",
+    "push_to_talk_no_key": "未選擇按鍵",
     "field_uwu_filter": "生成顏文字",
     "field_uwu_filter_desc": "只能在英語下使用 (* ^ ω ^)!!1",
     "state_muted": "靜音",
